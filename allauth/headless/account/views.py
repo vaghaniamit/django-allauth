@@ -20,6 +20,7 @@ from allauth.account.internal.flows.email_verification import (
 from allauth.account.internal.flows.email_verification_by_code import (
     EmailVerificationProcess,
 )
+from allauth.account.internal.flows.password_reset_by_code import PhonePasswordResetVerificationProcess
 from allauth.account.internal.flows.phone_verification import (
     PhoneVerificationStageProcess,
 )
@@ -448,12 +449,22 @@ class ResetPasswordView(APIView):
 
     def handle(self, request, *args, **kwargs):
         self.process = None
+
         if account_settings.PASSWORD_RESET_BY_CODE_ENABLED:
+            # First try stock email reset process
             self.process = password_reset_by_code.PasswordResetVerificationProcess.resume(
                 self.request
             )
+
+            # If not found, try custom phone reset process
+            if not self.process:
+                self.process = PhonePasswordResetVerificationProcess.resume(
+                    self.request
+                )
+
             if not self.process:
                 return ConflictResponse(request)
+
         return super().handle(request, *args, **kwargs)
 
     def get(self, request, *args, **kwargs) -> HttpResponse:
@@ -480,11 +491,13 @@ class ResetPasswordView(APIView):
     def post(self, request, *args, **kwargs):
         user = self.input.user
         flows.password_reset.reset_password(user, self.input.cleaned_data["password"])
+
         if self.process:
             self.process.confirm_code()
             self.process.finish()
         else:
             password_reset.finalize_password_reset(request, user)
+
         return AuthenticationResponse(self.request)
 
 
