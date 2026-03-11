@@ -17,7 +17,9 @@ from allauth.account.forms import (
     VerifyPhoneForm,
 )
 from allauth.account.internal import flows
+from allauth.account.internal.flows import password_reset_by_code, password_reset
 from allauth.account.models import EmailAddress, Login, get_emailconfirmation_model
+from allauth.account.utils import filter_users_by_email
 from allauth.core import context
 from allauth.core.internal.cryptokit import compare_user_code
 from allauth.headless.adapter import get_adapter
@@ -119,8 +121,79 @@ class VerifyEmailInput(inputs.Input):
 
 
 class RequestPasswordResetInput(ResetPasswordForm, inputs.Input):
-    pass
+    """
+    Supports password reset request by either email or phone.
 
+    Expected payload:
+      {"email": "user@example.com"}
+      or
+      {"phone": "+314159265378"}
+    """
+
+    email = inputs.EmailField(required=False)
+    phone = PhoneField(required=False)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self.target_email = None
+        self.target_phone = None
+        self.target_user = None
+        self.target_users = []
+
+    def clean(self):
+        cleaned_data = super().clean()
+        if self.errors:
+            return cleaned_data
+
+        email = cleaned_data.get("email")
+        phone = cleaned_data.get("phone")
+
+        if bool(email) == bool(phone):
+            raise ValidationError("Provide exactly one of email or phone.")
+
+        if email:
+            email = email.lower().strip()
+            self.target_email = email
+            self.target_users = list(filter_users_by_email(email))
+            self.target_user = self.target_users[0] if self.target_users else None
+
+        if phone:
+            # PhoneField already validates/normalizes input.
+            phone = str(phone).strip()
+            self.target_phone = phone
+            self.target_user = get_account_adapter().get_user_by_phone(phone)
+
+        return cleaned_data
+
+    def save(self, request):
+        """
+        Starts password reset flow for either email or phone.
+        """
+        if self.target_email:
+            if account_settings.PASSWORD_RESET_BY_CODE_ENABLED:
+                password_reset_by_code.PasswordResetVerificationProcess.initiate(
+                    request=request,
+                    user=self.target_user,
+                    email=self.target_email,
+                )
+            else:
+                password_reset.request_password_reset(
+                    request=request,
+                    email=self.target_email,
+                    users=self.target_users,
+                    token_generator=None,
+                )
+            return
+
+        if self.target_phone:
+            # This helper/class is custom and must be added in your fork.
+            password_reset_by_code.PhonePasswordResetVerificationProcess.initiate(
+                request=request,
+                user=self.target_user,
+                phone=self.target_phone,
+            )
+            return
 
 class ResetPasswordKeyInput(inputs.Input):
     key = inputs.CharField()

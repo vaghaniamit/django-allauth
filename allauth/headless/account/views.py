@@ -416,14 +416,22 @@ class RequestPasswordResetView(APIView):
     input_class = RequestPasswordResetInput
 
     def post(self, request, *args, **kwargs):
+        email = self.input.cleaned_data.get("email")
+        phone = self.input.cleaned_data.get("phone")
+
+        # choose rate-limit key dynamically
+        rl_key = email.lower() if email else str(phone)
         r429 = ratelimit.consume_or_429(
             self.request,
             action="reset_password",
-            key=self.input.cleaned_data["email"].lower(),
+            key=rl_key,
         )
         if r429:
             return r429
+
+        # let input save() trigger the correct reset flow
         self.input.save(request)
+
         if account_settings.PASSWORD_RESET_BY_CODE_ENABLED:
             return AuthenticationResponse(request)
         return response.RequestPasswordResponse(request)
@@ -441,10 +449,8 @@ class ResetPasswordView(APIView):
     def handle(self, request, *args, **kwargs):
         self.process = None
         if account_settings.PASSWORD_RESET_BY_CODE_ENABLED:
-            self.process = (
-                password_reset_by_code.PasswordResetVerificationProcess.resume(
-                    self.request
-                )
+            self.process = password_reset_by_code.PasswordResetVerificationProcess.resume(
+                self.request
             )
             if not self.process:
                 return ConflictResponse(request)
