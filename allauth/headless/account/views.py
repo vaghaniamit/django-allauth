@@ -5,6 +5,7 @@ from django.utils.decorators import method_decorator
 
 from allauth.account import app_settings as account_settings
 from allauth.account.adapter import get_adapter as get_account_adapter
+from allauth.account.app_settings import LoginMethod
 from allauth.account.internal import flows
 from allauth.account.internal.constants import LoginStageKey
 from allauth.account.internal.flows import (
@@ -126,61 +127,48 @@ class ConfirmLoginCodeView(APIView):
 class LoginView(APIView):
     input_class = LoginInput
 
-    def has_verified_email(email):
-        from allauth.account.models import EmailAddress
-        return EmailAddress.objects.filter(email__iexact=email, verified=True).exists()
-
     def post(self, request, *args, **kwargs):
         if request.user.is_authenticated:
             return ConflictResponse(request)
 
         credentials = self.input.cleaned_data
+        login_value = self.input.login.login
+        login_method = flows.login.derive_login_method(login_value)
+
+        # Strict verification check BEFORE perform_password_login()
+        if login_method == LoginMethod.EMAIL:
+            if not get_account_adapter().is_email_verified(request, login_value):
+                return APIResponse(
+                    request,
+                    status=HTTPStatus.FORBIDDEN,
+                    data={
+                        "errors": [
+                            {
+                                "code": "email_not_verified",
+                                "message": "Please verify your email before logging in.",
+                            }
+                        ]
+                    },
+                )
+
+        elif login_method == LoginMethod.PHONE:
+            if not get_account_adapter().has_verified_phone(login_value):
+                return APIResponse(
+                    request,
+                    status=HTTPStatus.FORBIDDEN,
+                    data={
+                        "errors": [
+                            {
+                                "code": "phone_not_verified",
+                                "message": "Please verify your phone number before logging in.",
+                            }
+                        ]
+                    },
+                )
 
         response = flows.login.perform_password_login(
             request, credentials, self.input.login
         )
-
-        # keep stock behavior if login failed
-        if not response:
-            return AuthenticationResponse.from_response(request, response)
-
-        email_value = credentials.get("email")
-        phone_value = credentials.get("phone")
-
-        # email login
-        if email_value:
-            if not get_account_adapter().is_email_verified(request, email_value):
-                return APIResponse(
-                    request,
-                    status=403,
-                    data={
-                        "status": 403,
-                        "errors": [
-                            {
-                                "code": "email_not_verified",
-                                "message": "Please verify your email before logging in."
-                            }
-                        ],
-                    },
-                )
-
-        # phone login
-        elif phone_value:
-            if not get_account_adapter().has_verified_phone(phone_value):
-                return APIResponse(
-                    request,
-                    status=403,
-                    data={
-                        "status": 403,
-                        "errors": [
-                            {
-                                "code": "phone_not_verified",
-                                "message": "Please verify your phone number before logging in."
-                            }
-                        ],
-                    },
-                )
-
         return AuthenticationResponse.from_response(request, response)
 
 
