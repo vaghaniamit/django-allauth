@@ -61,7 +61,7 @@ from allauth.headless.base.response import (
 from allauth.headless.base.views import APIView, AuthenticatedAPIView
 from allauth.headless.internal import authkit
 from allauth.headless.internal.restkit.response import ErrorResponse
-
+from allauth.account.utils import perform_login
 
 class RequestLoginCodeView(APIView):
     input_class = RequestLoginCodeInput
@@ -205,21 +205,30 @@ class VerifyEmailView(APIView):
 
     def handle(self, request, *args, **kwargs):
         self.stage = LoginStageController.enter(request, EmailVerificationStage.key)
+
+        self.process = None
+        if account_settings.EMAIL_VERIFICATION_BY_CODE_ENABLED:
+            self.process = flows.email_verification_by_code.EmailVerificationProcess.resume(
+                request
+            )
+
+        # Old behavior:
+        # if not self.stage and code_enabled and not request.user.is_authenticated:
+        #     return ConflictResponse(request)
+        #
+        # New behavior:
+        # allow verify-by-code to continue when there is a resumable process,
+        # even if there is no login stage.
         if (
             not self.stage
-            and account_settings.EMAIL_VERIFICATION_BY_CODE_ENABLED
+            and not self.process
             and not request.user.is_authenticated
         ):
             return ConflictResponse(request)
-        self.process = None
-        if account_settings.EMAIL_VERIFICATION_BY_CODE_ENABLED:
-            self.process = (
-                flows.email_verification_by_code.EmailVerificationProcess.resume(
-                    request
-                )
-            )
-            if not self.process:
-                return ConflictResponse(request)
+
+        if account_settings.EMAIL_VERIFICATION_BY_CODE_ENABLED and not self.process:
+            return ConflictResponse(request)
+
         return super().handle(request, *args, **kwargs)
 
     def get_input_kwargs(self) -> dict:
@@ -230,17 +239,19 @@ class VerifyEmailView(APIView):
             self.process.record_invalid_attempt()
         return super().handle_invalid_input(input)
 
-    def get(self, request, *args, **kwargs) -> HttpResponse:
+    def get(self, request, *args, **kwargs):
         key = request.headers.get("x-email-verification-key", "")
         input = self.input_class({"key": key}, process=self.process)
         if not input.is_valid():
             if self.process:
                 self.process.record_invalid_attempt()
             return ErrorResponse(request, input=input)
+
         if self.process:
             email_address = self.process.email_address
         else:
             email_address = input.verification.email_address
+
         return response.VerifyEmailResponse(request, email_address, stage=self.stage)
 
     def post(self, request, *args, **kwargs):
@@ -248,15 +259,26 @@ class VerifyEmailView(APIView):
             email_address = self.process.finish()
         else:
             email_address = self.input.verification.confirm(request)
+
         if not email_address:
-            # Should not happen, VerifyInputInput should have verified all
-            # preconditions.
             return APIResponse(request, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+
         response = None
+
         if self.stage:
-            # Verifying email as part of login/signup flow may imply the user is
-            # to be logged in...
+            # stock behavior
             response = email_verification.login_on_verification(request, email_address)
+
+        elif self.process and not request.user.is_authenticated:
+            # custom behavior for OPTIONAL verification + process-only flow
+            response = perform_login(
+                request,
+                email_address.user,
+                email_verification=account_settings.EMAIL_VERIFICATION,
+                signup=True,
+                email=email_address.email,
+            )
+
         return AuthenticationResponse.from_response(request, response)
 
 
