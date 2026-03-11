@@ -142,6 +142,7 @@ class LoginView(APIView):
                         "errors": [
                             {
                                 "code": "email_not_verified",
+                                "is_email_verified": False,
                                 "message": "Please verify your email before logging in.",
                             }
                         ]
@@ -157,6 +158,7 @@ class LoginView(APIView):
                         "errors": [
                             {
                                 "code": "phone_not_verified",
+                                "is_phone_verified": False,
                                 "message": "Please verify your phone number before logging in.",
                             }
                         ]

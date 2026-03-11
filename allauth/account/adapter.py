@@ -991,6 +991,9 @@ class DefaultAccountAdapter(BaseAdapter):
         raise NotImplementedError
 
     def has_verified_phone(self, phone):
+        """
+        Checks whether or not the given phone number is verified.
+        """
         pass
 
 
