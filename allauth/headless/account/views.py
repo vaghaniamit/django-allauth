@@ -144,16 +144,49 @@ class SignupView(APIView):
     def post(self, request, *args, **kwargs):
         if request.user.is_authenticated:
             return ConflictResponse(request)
+
         if not get_account_adapter().is_open_for_signup(request):
             return ForbiddenResponse(request)
+
         user, resp = self.input.try_save(request)
-        if not resp:
+
+        # If allauth already returned a response, keep stock behavior
+        if resp:
+            return AuthenticationResponse.from_response(request, resp)
+
+        email = self.input.cleaned_data.get("email")
+        phone = self.input.cleaned_data.get("phone")
+
+        # Custom branch:
+        # Email signup should stay pending and unauthenticated
+        if email and not phone:
             try:
-                resp = flows.signup.complete_signup(
-                    request, user=user, by_passkey=self.by_passkey
+                EmailVerificationProcess.initiate(
+                    request=request,
+                    user=user,
+                    email=email,
                 )
-            except ImmediateHttpResponse:
-                pass
+            except ImmediateHttpResponse as e:
+                return AuthenticationResponse.from_response(request, e.response)
+
+            # Important:
+            # Do NOT call flows.signup.complete_signup()
+            # We want:
+            # - is_authenticated = false
+            # - session token present
+            # - /auth/email/verify usable next
+            return AuthenticationResponse(request)
+
+        # Keep stock behavior for phone signup
+        try:
+            resp = flows.signup.complete_signup(
+                request,
+                user=user,
+                by_passkey=self.by_passkey,
+            )
+        except ImmediateHttpResponse:
+            pass
+
         return AuthenticationResponse.from_response(request, resp)
 
 
