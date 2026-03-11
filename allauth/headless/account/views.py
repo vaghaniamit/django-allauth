@@ -5,7 +5,6 @@ from django.utils.decorators import method_decorator
 
 from allauth.account import app_settings as account_settings
 from allauth.account.adapter import get_adapter as get_account_adapter
-from allauth.account.app_settings import LoginMethod
 from allauth.account.internal import flows
 from allauth.account.internal.constants import LoginStageKey
 from allauth.account.internal.flows import (
@@ -132,12 +131,10 @@ class LoginView(APIView):
             return ConflictResponse(request)
 
         credentials = self.input.cleaned_data
-        login_value = self.input.login.login
-        login_method = flows.login.derive_login_method(login_value)
 
         # Strict verification check BEFORE perform_password_login()
-        if login_method == LoginMethod.EMAIL:
-            if not get_account_adapter().is_email_verified(request, login_value):
+        if credentials.email:
+            if not get_account_adapter().is_email_verified(request, credentials.email):
                 return APIResponse(
                     request,
                     status=HTTPStatus.FORBIDDEN,
@@ -151,8 +148,8 @@ class LoginView(APIView):
                     },
                 )
 
-        elif login_method == LoginMethod.PHONE:
-            if not get_account_adapter().has_verified_phone(login_value):
+        elif credentials.phone:
+            if not get_account_adapter().has_verified_phone(credentials.phone):
                 return APIResponse(
                     request,
                     status=HTTPStatus.FORBIDDEN,
