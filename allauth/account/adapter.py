@@ -990,6 +990,9 @@ class DefaultAccountAdapter(BaseAdapter):
         """
         raise NotImplementedError
 
+    def has_verified_phone(self, phone):
+        pass
+
 
 def get_adapter(request=None) -> DefaultAccountAdapter:
     return import_attribute(app_settings.ADAPTER)(request)

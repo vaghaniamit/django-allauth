@@ -126,27 +126,9 @@ class ConfirmLoginCodeView(APIView):
 class LoginView(APIView):
     input_class = LoginInput
 
-    def _has_verified_email(self, user, login_value: str = None) -> bool:
+    def has_verified_email(email):
         from allauth.account.models import EmailAddress
-
-        qs = EmailAddress.objects.filter(user=user, verified=True)
-        if login_value:
-            qs = qs.filter(email__iexact=login_value)
-        return qs.exists()
-
-    def _has_verified_phone(self, user, login_value: str = None) -> bool:
-        phone_data = get_account_adapter().get_phone(user)
-        if not phone_data:
-            return False
-        phone, verified = phone_data
-        if not verified:
-            return False
-        if login_value:
-            return str(phone) == str(login_value)
-        return True
-
-    def _is_email_value(self, value: str) -> bool:
-        return "@" in value
+        return EmailAddress.objects.filter(email__iexact=email, verified=True).exists()
 
     def post(self, request, *args, **kwargs):
         if request.user.is_authenticated:
@@ -154,21 +136,20 @@ class LoginView(APIView):
 
         credentials = self.input.cleaned_data
 
-        # First authenticate using existing allauth flow
         response = flows.login.perform_password_login(
             request, credentials, self.input.login
         )
 
-        # If authentication failed, keep stock behavior
+        # keep stock behavior if login failed
         if not response:
             return AuthenticationResponse.from_response(request, response)
 
-        user = self.input.login.user
-        login_value = self.input.login.login
+        email_value = credentials.get("email")
+        phone_value = credentials.get("phone")
 
-        # Strict verification check
-        if self._is_email_value(login_value):
-            if not self._has_verified_email(user, login_value):
+        # email login
+        if email_value:
+            if not get_account_adapter().is_email_verified(request, email_value):
                 return APIResponse(
                     request,
                     status=403,
@@ -177,13 +158,15 @@ class LoginView(APIView):
                         "errors": [
                             {
                                 "code": "email_not_verified",
-                                "message": "Please verify your email address before logging in."
+                                "message": "Please verify your email before logging in."
                             }
                         ],
                     },
                 )
-        else:
-            if not self._has_verified_phone(user, login_value):
+
+        # phone login
+        elif phone_value:
+            if not get_account_adapter().has_verified_phone(phone_value):
                 return APIResponse(
                     request,
                     status=403,
