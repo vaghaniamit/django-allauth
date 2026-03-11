@@ -133,8 +133,8 @@ class LoginView(APIView):
         credentials = self.input.cleaned_data
 
         # Strict verification check BEFORE perform_password_login()
-        if credentials.email:
-            if not get_account_adapter().is_email_verified(request, credentials.email):
+        if credentials.get("email"):
+            if not get_account_adapter().is_email_verified(request, credentials.get("email")):
                 return APIResponse(
                     request,
                     status=HTTPStatus.FORBIDDEN,
@@ -148,8 +148,8 @@ class LoginView(APIView):
                     },
                 )
 
-        elif credentials.phone:
-            if not get_account_adapter().has_verified_phone(credentials.phone):
+        elif credentials.get("phone"):
+            if not get_account_adapter().has_verified_phone(credentials.get("phone")):
                 return APIResponse(
                     request,
                     status=HTTPStatus.FORBIDDEN,
