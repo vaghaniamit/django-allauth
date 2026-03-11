@@ -183,14 +183,33 @@ class SignupView(APIView):
         if not get_account_adapter().is_open_for_signup(request):
             return ForbiddenResponse(request)
 
+        email = self.input.cleaned_data.get("email")
+        phone = self.input.cleaned_data.get("phone")
+
+        # Explicit duplicate phone check
+        # This intentionally bypasses enumeration-style generic response
+        if phone:
+            existing_user = get_account_adapter().get_user_by_phone(phone)
+            if existing_user:
+                return APIResponse(
+                    request,
+                    status=HTTPStatus.CONFLICT,
+                    data={
+                        "errors": [
+                            {
+                                "code": "phone_already_exists",
+                                "message": "An account with this phone number already exists.",
+                            }
+                        ]
+                    },
+                )
+
         user, resp = self.input.try_save(request)
 
         # If allauth already returned a response, keep stock behavior
+        # Example: duplicate email / enumeration flow / other built-in flow responses
         if resp:
             return AuthenticationResponse.from_response(request, resp)
-
-        email = self.input.cleaned_data.get("email")
-        phone = self.input.cleaned_data.get("phone")
 
         # Custom branch:
         # Email signup should stay pending and unauthenticated
@@ -204,12 +223,11 @@ class SignupView(APIView):
             except ImmediateHttpResponse as e:
                 return AuthenticationResponse.from_response(request, e.response)
 
-            # Important:
-            # Do NOT call flows.signup.complete_signup()
+            # Do NOT call complete_signup() here.
             # We want:
             # - is_authenticated = false
             # - session token present
-            # - /auth/email/verify usable next
+            # - /_allauth/app/v1/auth/email/verify usable next
             return AuthenticationResponse(request)
 
         # Keep stock behavior for phone signup
